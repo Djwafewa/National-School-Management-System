@@ -1,0 +1,784 @@
+// ============================================================================
+// NSMS - National School Management System
+// Prisma Database Schema for PostgreSQL
+// Multi-tenant SaaS for Papua New Guinea Schools
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum SchoolType {
+  GOVERNMENT
+  CHURCH_AGENCY
+  PRIVATE
+  INTERNATIONAL
+}
+
+enum SchoolLevel {
+  ELEMENTARY       // Prep to Grade 2
+  PRIMARY          // Grade 3 to Grade 8
+  SECONDARY        // Grade 9 to Grade 12
+  VOCATIONAL
+  TECHNICAL
+  COMBINED         // Multi-level schools
+}
+
+enum UserRole {
+  SUPER_ADMIN      // Platform administrator
+  PROVINCIAL_ADMIN // Provincial education office
+  SCHOOL_ADMIN     // School principal / admin
+  TEACHER
+  ACCOUNTANT
+  LIBRARIAN
+  PARENT
+  STUDENT
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum StudentStatus {
+  ENROLLED
+  GRADUATED
+  TRANSFERRED
+  WITHDRAWN
+  SUSPENDED
+  EXPELLED
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  EXCUSED
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  MOBILE_MONEY     // PNG mobile money (e.g., MoniPlus, CellMoni)
+  CHEQUE
+  ONLINE
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+  CANCELLED
+}
+
+enum FeeType {
+  TUITION
+  BOARDING
+  BOOK_FEE
+  SPORT_FEE
+  EXAM_FEE
+  PROJECT_FEE
+  UNIFORM
+  TRANSPORT
+  OTHER
+}
+
+enum TermName {
+  TERM_1
+  TERM_2
+  TERM_3
+  TERM_4
+}
+
+enum DisciplineAction {
+  WARNING
+  DETENTION
+  SUSPENSION
+  EXPULSION
+  COMMUNITY_SERVICE
+  PARENT_CONFERENCE
+}
+
+enum NotificationType {
+  ANNOUNCEMENT
+  FEE_REMINDER
+  EXAM_RESULT
+  ATTENDANCE_ALERT
+  GENERAL
+  EMERGENCY
+}
+
+// ============================================================================
+// CORE TENANCY
+// ============================================================================
+
+model Province {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique @db.VarChar(100)
+  code      String   @unique @db.VarChar(10) // e.g., NCD, EHP, WHP
+  region    String   @db.VarChar(50) // Highlands, Momase, Southern, Islands
+  schools   School[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("provinces")
+}
+
+model District {
+  id         Int      @id @default(autoincrement())
+  name       String   @db.VarChar(100)
+  provinceId Int
+  schools    School[]
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([name, provinceId])
+  @@map("districts")
+}
+
+model School {
+  id           Int         @id @default(autoincrement())
+  name         String      @db.VarChar(200)
+  code         String      @unique @db.VarChar(20) // Unique school code
+  schoolType   SchoolType
+  schoolLevel  SchoolLevel
+  provinceId   Int
+  province     Province    @relation(fields: [provinceId], references: [id])
+  districtId   Int?
+  district     District?   @relation(fields: [districtId], references: [id])
+  address      String?     @db.Text
+  phone        String?     @db.VarChar(20)
+  email        String?     @db.VarChar(150)
+  website      String?     @db.VarChar(200)
+  logoUrl      String?     @db.VarChar(500)
+  churchAgency String?     @db.VarChar(100) // e.g., Catholic, Lutheran, SDA, United Church
+  motto        String?     @db.VarChar(300)
+  established  Int?        // Year established
+  isActive     Boolean     @default(true)
+  
+  // Relations
+  users            User[]
+  students         Student[]
+  classes          Class[]
+  subjects         Subject[]
+  academicYears    AcademicYear[]
+  feeStructures    FeeStructure[]
+  payments         Payment[]
+  announcements    Announcement[]
+  timetableSlots   TimetableSlot[]
+  libraryBooks     LibraryBook[]
+  assets           SchoolAsset[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([provinceId])
+  @@index([schoolType])
+  @@map("schools")
+}
+
+// ============================================================================
+// USERS & AUTHENTICATION
+// ============================================================================
+
+model User {
+  id            Int        @id @default(autoincrement())
+  schoolId      Int?
+  school        School?    @relation(fields: [schoolId], references: [id])
+  firstName     String     @db.VarChar(100)
+  lastName      String     @db.VarChar(100)
+  email         String     @unique @db.VarChar(150)
+  passwordHash  String     @db.Text
+  phone         String?    @db.VarChar(20)
+  role          UserRole
+  status        UserStatus @default(PENDING_VERIFICATION)
+  avatarUrl     String?    @db.VarChar(500)
+  lastLoginAt   DateTime?
+  mfaEnabled    Boolean    @default(false)
+  mfaSecret     String?    @db.Text
+
+  // Relations
+  teacherProfile  TeacherProfile?
+  parentProfile   ParentProfile?
+  auditLogs       AuditLog[]
+  sentMessages    Message[]       @relation("SentMessages")
+  receivedMessages Message[]      @relation("ReceivedMessages")
+  refreshTokens   RefreshToken[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([schoolId])
+  @@index([role])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique @db.VarChar(500)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// ============================================================================
+// TEACHER MANAGEMENT (ADDITIONAL)
+// ============================================================================
+
+model TeacherProfile {
+  id              Int      @id @default(autoincrement())
+  userId          Int      @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  employeeNumber  String?  @unique @db.VarChar(50)
+  qualification   String?  @db.VarChar(200) // e.g., Diploma in Teaching, B.Ed
+  specialization  String?  @db.VarChar(200)
+  yearsExperience Int?
+  dateJoined      DateTime?
+  salary          Decimal? @db.Decimal(10, 2)
+  
+  // Relations
+  classAssignments  ClassTeacher[]
+  subjectTeachers   SubjectTeacher[]
+  attendanceRecords TeacherAttendance[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("teacher_profiles")
+}
+
+model TeacherAttendance {
+  id        Int              @id @default(autoincrement())
+  teacherId Int
+  teacher   TeacherProfile   @relation(fields: [teacherId], references: [id])
+  date      DateTime         @db.Date
+  status    AttendanceStatus
+  remarks   String?          @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@unique([teacherId, date])
+  @@map("teacher_attendance")
+}
+
+// ============================================================================
+// PARENT / GUARDIAN MODULE (ADDITIONAL)
+// ============================================================================
+
+model ParentProfile {
+  id           Int      @id @default(autoincrement())
+  userId       Int      @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  occupation   String?  @db.VarChar(200)
+  village      String?  @db.VarChar(200)
+  relationship String?  @db.VarChar(50) // Father, Mother, Guardian, Uncle, etc.
+  
+  // Relations
+  studentGuardians StudentGuardian[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("parent_profiles")
+}
+
+model StudentGuardian {
+  id        Int           @id @default(autoincrement())
+  studentId Int
+  student   Student       @relation(fields: [studentId], references: [id])
+  parentId  Int
+  parent    ParentProfile @relation(fields: [parentId], references: [id])
+  isPrimary Boolean       @default(false)
+
+  @@unique([studentId, parentId])
+  @@map("student_guardians")
+}
+
+// ============================================================================
+// STUDENT MANAGEMENT
+// ============================================================================
+
+model Student {
+  id            Int           @id @default(autoincrement())
+  schoolId      Int
+  school        School        @relation(fields: [schoolId], references: [id])
+  studentNumber String        @unique @db.VarChar(30) // Auto-generated student ID
+  firstName     String        @db.VarChar(100)
+  lastName      String        @db.VarChar(100)
+  middleName    String?       @db.VarChar(100)
+  gender        Gender
+  dateOfBirth   DateTime      @db.Date
+  placeOfBirth  String?       @db.VarChar(200)
+  province      String?       @db.VarChar(100) // Home province
+  village       String?       @db.VarChar(200) // Home village
+  citizenship   String?       @db.VarChar(50)  @default("Papua New Guinean")
+  religion      String?       @db.VarChar(100)
+  photoUrl      String?       @db.VarChar(500)
+  medicalNotes  String?       @db.Text
+  status        StudentStatus @default(ENROLLED)
+  enrollmentDate DateTime     @default(now())
+
+  // Relations
+  guardians       StudentGuardian[]
+  classEnrollments ClassEnrollment[]
+  attendance      StudentAttendance[]
+  examResults     ExamResult[]
+  payments        Payment[]
+  feeBalances     FeeBalance[]
+  disciplineRecords DisciplineRecord[]
+  libraryLoans    LibraryLoan[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([schoolId])
+  @@index([status])
+  @@map("students")
+}
+
+// ============================================================================
+// ACADEMIC STRUCTURE
+// ============================================================================
+
+model AcademicYear {
+  id        Int      @id @default(autoincrement())
+  schoolId  Int
+  school    School   @relation(fields: [schoolId], references: [id])
+  year      Int      // e.g., 2026
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+  isCurrent Boolean  @default(false)
+
+  terms     Term[]
+  classes   Class[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([schoolId, year])
+  @@map("academic_years")
+}
+
+model Term {
+  id             Int          @id @default(autoincrement())
+  academicYearId Int
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+  termName       TermName
+  startDate      DateTime     @db.Date
+  endDate        DateTime     @db.Date
+
+  exams          Exam[]
+  feeStructures  FeeStructure[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([academicYearId, termName])
+  @@map("terms")
+}
+
+model Class {
+  id             Int           @id @default(autoincrement())
+  schoolId       Int
+  school         School        @relation(fields: [schoolId], references: [id])
+  academicYearId Int
+  academicYear   AcademicYear  @relation(fields: [academicYearId], references: [id])
+  gradeLevel     String        @db.VarChar(50) // e.g., "Grade 7", "Grade 10"
+  section        String        @db.VarChar(20) // e.g., "A", "B", "Blue", "Red"
+  capacity       Int?
+
+  // Relations
+  teachers    ClassTeacher[]
+  enrollments ClassEnrollment[]
+  attendance  StudentAttendance[]
+  timetable   TimetableSlot[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([schoolId, academicYearId, gradeLevel, section])
+  @@map("classes")
+}
+
+model ClassTeacher {
+  id         Int            @id @default(autoincrement())
+  classId    Int
+  class      Class          @relation(fields: [classId], references: [id])
+  teacherId  Int
+  teacher    TeacherProfile @relation(fields: [teacherId], references: [id])
+  isClassTeacher Boolean    @default(false) // Home room teacher
+
+  @@unique([classId, teacherId])
+  @@map("class_teachers")
+}
+
+model ClassEnrollment {
+  id        Int      @id @default(autoincrement())
+  classId   Int
+  class     Class    @relation(fields: [classId], references: [id])
+  studentId Int
+  student   Student  @relation(fields: [studentId], references: [id])
+  enrolledAt DateTime @default(now())
+
+  @@unique([classId, studentId])
+  @@map("class_enrollments")
+}
+
+// ============================================================================
+// SUBJECTS & CURRICULUM
+// ============================================================================
+
+model Subject {
+  id           Int      @id @default(autoincrement())
+  schoolId     Int
+  school       School   @relation(fields: [schoolId], references: [id])
+  subjectName  String   @db.VarChar(100) // e.g., Mathematics, English, Science
+  subjectCode  String?  @db.VarChar(20)
+  gradeLevel   String   @db.VarChar(50)
+  description  String?  @db.Text
+  isCompulsory Boolean  @default(true)
+
+  // Relations
+  teachers    SubjectTeacher[]
+  exams       Exam[]
+  timetable   TimetableSlot[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([schoolId, subjectCode, gradeLevel])
+  @@map("subjects")
+}
+
+model SubjectTeacher {
+  id        Int            @id @default(autoincrement())
+  subjectId Int
+  subject   Subject        @relation(fields: [subjectId], references: [id])
+  teacherId Int
+  teacher   TeacherProfile @relation(fields: [teacherId], references: [id])
+
+  @@unique([subjectId, teacherId])
+  @@map("subject_teachers")
+}
+
+// ============================================================================
+// ATTENDANCE
+// ============================================================================
+
+model StudentAttendance {
+  id        Int              @id @default(autoincrement())
+  studentId Int
+  student   Student          @relation(fields: [studentId], references: [id])
+  classId   Int
+  class     Class            @relation(fields: [classId], references: [id])
+  date      DateTime         @db.Date
+  status    AttendanceStatus
+  remarks   String?          @db.Text
+  recordedBy Int?            // userId of teacher who recorded
+
+  createdAt DateTime @default(now())
+
+  @@unique([studentId, classId, date])
+  @@index([classId, date])
+  @@map("student_attendance")
+}
+
+// ============================================================================
+// EXAMINATIONS & ACADEMIC RECORDS
+// ============================================================================
+
+model Exam {
+  id        Int      @id @default(autoincrement())
+  termId    Int
+  term      Term     @relation(fields: [termId], references: [id])
+  subjectId Int
+  subject   Subject  @relation(fields: [subjectId], references: [id])
+  examName  String   @db.VarChar(200) // e.g., "Mid-Term Test", "Final Exam"
+  maxMarks  Decimal  @db.Decimal(5, 2) @default(100)
+  weight    Decimal  @db.Decimal(5, 2) @default(100) // Percentage weight
+  examDate  DateTime? @db.Date
+
+  results   ExamResult[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("exams")
+}
+
+model ExamResult {
+  id        Int     @id @default(autoincrement())
+  examId    Int
+  exam      Exam    @relation(fields: [examId], references: [id])
+  studentId Int
+  student   Student @relation(fields: [studentId], references: [id])
+  marks     Decimal @db.Decimal(5, 2)
+  grade     String? @db.VarChar(5) // A, B, C, D, E
+  remarks   String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([examId, studentId])
+  @@map("exam_results")
+}
+
+// ============================================================================
+// FEE MANAGEMENT & PAYMENTS
+// ============================================================================
+
+model FeeStructure {
+  id          Int      @id @default(autoincrement())
+  schoolId    Int
+  school      School   @relation(fields: [schoolId], references: [id])
+  termId      Int?
+  term        Term?    @relation(fields: [termId], references: [id])
+  feeType     FeeType
+  gradeLevel  String   @db.VarChar(50) // Which grade level this applies to
+  amount      Decimal  @db.Decimal(10, 2) // Amount in PNG Kina (PGK)
+  description String?  @db.Text
+  isActive    Boolean  @default(true)
+
+  feeBalances FeeBalance[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("fee_structures")
+}
+
+model FeeBalance {
+  id             Int          @id @default(autoincrement())
+  studentId      Int
+  student        Student      @relation(fields: [studentId], references: [id])
+  feeStructureId Int
+  feeStructure   FeeStructure @relation(fields: [feeStructureId], references: [id])
+  totalAmount    Decimal      @db.Decimal(10, 2)
+  paidAmount     Decimal      @db.Decimal(10, 2) @default(0)
+  balance        Decimal      @db.Decimal(10, 2) // Remaining balance
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([studentId, feeStructureId])
+  @@map("fee_balances")
+}
+
+model Payment {
+  id            Int           @id @default(autoincrement())
+  schoolId      Int
+  school        School        @relation(fields: [schoolId], references: [id])
+  studentId     Int
+  student       Student       @relation(fields: [studentId], references: [id])
+  amount        Decimal       @db.Decimal(10, 2) // In PGK
+  paymentMethod PaymentMethod
+  paymentStatus PaymentStatus @default(PENDING)
+  receiptNumber String?       @unique @db.VarChar(50)
+  paymentDate   DateTime      @db.Date
+  description   String?       @db.Text
+  processedBy   Int?          // userId of staff who processed
+  transactionRef String?      @db.VarChar(100) // External payment reference
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([schoolId])
+  @@index([studentId])
+  @@index([paymentDate])
+  @@map("payments")
+}
+
+// ============================================================================
+// DISCIPLINE RECORDS (ADDITIONAL)
+// ============================================================================
+
+model DisciplineRecord {
+  id          Int              @id @default(autoincrement())
+  studentId   Int
+  student     Student          @relation(fields: [studentId], references: [id])
+  incidentDate DateTime        @db.Date
+  description String           @db.Text
+  action      DisciplineAction
+  actionDate  DateTime?        @db.Date
+  resolvedDate DateTime?       @db.Date
+  reportedBy  Int?             // userId
+  remarks     String?          @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([studentId])
+  @@map("discipline_records")
+}
+
+// ============================================================================
+// TIMETABLE / SCHEDULE MANAGEMENT (ADDITIONAL)
+// ============================================================================
+
+model TimetableSlot {
+  id        Int      @id @default(autoincrement())
+  schoolId  Int
+  school    School   @relation(fields: [schoolId], references: [id])
+  classId   Int
+  class     Class    @relation(fields: [classId], references: [id])
+  subjectId Int
+  subject   Subject  @relation(fields: [subjectId], references: [id])
+  dayOfWeek Int      // 1=Monday to 5=Friday
+  startTime String   @db.VarChar(5) // "08:00"
+  endTime   String   @db.VarChar(5) // "08:40"
+  room      String?  @db.VarChar(50)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("timetable_slots")
+}
+
+// ============================================================================
+// LIBRARY MANAGEMENT (ADDITIONAL)
+// ============================================================================
+
+model LibraryBook {
+  id          Int      @id @default(autoincrement())
+  schoolId    Int
+  school      School   @relation(fields: [schoolId], references: [id])
+  title       String   @db.VarChar(300)
+  author      String?  @db.VarChar(200)
+  isbn        String?  @db.VarChar(20)
+  category    String?  @db.VarChar(100)
+  totalCopies Int      @default(1)
+  availableCopies Int  @default(1)
+
+  loans       LibraryLoan[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("library_books")
+}
+
+model LibraryLoan {
+  id          Int          @id @default(autoincrement())
+  bookId      Int
+  book        LibraryBook  @relation(fields: [bookId], references: [id])
+  studentId   Int
+  student     Student      @relation(fields: [studentId], references: [id])
+  borrowDate  DateTime     @db.Date
+  dueDate     DateTime     @db.Date
+  returnDate  DateTime?    @db.Date
+  isReturned  Boolean      @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("library_loans")
+}
+
+// ============================================================================
+// SCHOOL ASSETS / INVENTORY (ADDITIONAL)
+// ============================================================================
+
+model SchoolAsset {
+  id          Int      @id @default(autoincrement())
+  schoolId    Int
+  school      School   @relation(fields: [schoolId], references: [id])
+  name        String   @db.VarChar(200)
+  category    String   @db.VarChar(100) // Furniture, IT Equipment, Sports, etc.
+  quantity    Int      @default(1)
+  condition   String?  @db.VarChar(50) // Good, Fair, Poor, Damaged
+  location    String?  @db.VarChar(200)
+  purchaseDate DateTime? @db.Date
+  value       Decimal?  @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("school_assets")
+}
+
+// ============================================================================
+// COMMUNICATION & NOTIFICATIONS
+// ============================================================================
+
+model Announcement {
+  id        Int              @id @default(autoincrement())
+  schoolId  Int
+  school    School           @relation(fields: [schoolId], references: [id])
+  title     String           @db.VarChar(300)
+  content   String           @db.Text
+  type      NotificationType
+  priority  Int              @default(0) // 0=normal, 1=important, 2=urgent
+  authorId  Int?             // userId
+  isActive  Boolean          @default(true)
+  expiresAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([schoolId])
+  @@map("announcements")
+}
+
+model Message {
+  id         Int      @id @default(autoincrement())
+  senderId   Int
+  sender     User     @relation("SentMessages", fields: [senderId], references: [id])
+  receiverId Int
+  receiver   User     @relation("ReceivedMessages", fields: [receiverId], references: [id])
+  subject    String   @db.VarChar(300)
+  body       String   @db.Text
+  isRead     Boolean  @default(false)
+  readAt     DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([senderId])
+  @@index([receiverId])
+  @@map("messages")
+}
+
+// ============================================================================
+// AUDIT LOGGING
+// ============================================================================
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String   @db.VarChar(100) // CREATE, UPDATE, DELETE, LOGIN, etc.
+  entity    String   @db.VarChar(100) // Table/resource name
+  entityId  Int?
+  oldValues Json?    // Previous values (for updates)
+  newValues Json?    // New values
+  ipAddress String?  @db.VarChar(45)
+  userAgent String?  @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([entity])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
