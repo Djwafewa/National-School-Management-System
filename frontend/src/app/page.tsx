@@ -10,10 +10,32 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
+  const DEMO_CREDENTIALS = {
+    email: 'admin@nsms.edu.pg',
+    password: 'Admin@2025',
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
+
+    // Demo mode: allow login with demo credentials when no backend is running
+    if (email === DEMO_CREDENTIALS.email && password === DEMO_CREDENTIALS.password) {
+      const demoUser = {
+        id: 1,
+        firstName: 'System',
+        lastName: 'Administrator',
+        email: DEMO_CREDENTIALS.email,
+        role: 'SUPER_ADMIN',
+        status: 'ACTIVE',
+      };
+      localStorage.setItem('token', 'demo-token');
+      localStorage.setItem('refreshToken', 'demo-refresh');
+      localStorage.setItem('user', JSON.stringify(demoUser));
+      window.location.href = '/dashboard';
+      return;
+    }
 
     try {
       const res = await fetch('/api/auth/login', {
@@ -34,7 +56,7 @@ export default function LoginPage() {
       localStorage.setItem('user', JSON.stringify(data.user));
       router.push('/dashboard');
     } catch {
-      setError('Network error. Please try again.');
+      setError('Invalid credentials. Use demo: admin@nsms.edu.pg / Admin@2025');
     } finally {
       setLoading(false);
     }
@@ -115,7 +137,15 @@ export default function LoginPage() {
             </button>
           </form>
 
-          <div className="mt-6 text-center text-xs text-gray-400">
+          <div className="mt-6 pt-4 border-t border-gray-100">
+            <p className="text-xs text-gray-400 text-center mb-2">Demo Credentials</p>
+            <div className="bg-gray-50 rounded-lg px-3 py-2 text-xs text-gray-500 space-y-1">
+              <div className="flex justify-between"><span>Email:</span><span className="font-mono">admin@nsms.edu.pg</span></div>
+              <div className="flex justify-between"><span>Password:</span><span className="font-mono">Admin@2025</span></div>
+            </div>
+          </div>
+
+          <div className="mt-4 text-center text-xs text-gray-400">
             &copy; {new Date().getFullYear()} NSMS Papua New Guinea. All rights reserved.
           </div>
         </div>

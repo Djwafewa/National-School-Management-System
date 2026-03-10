@@ -38,12 +38,16 @@ export default function DashboardLayout({
   const pathname = usePathname();
 
   useEffect(() => {
-    const currentUser = getCurrentUser();
-    if (!currentUser) {
+    try {
+      const currentUser = getCurrentUser();
+      if (!currentUser) {
+        router.push('/');
+        return;
+      }
+      setUser(currentUser);
+    } catch {
       router.push('/');
-      return;
     }
-    setUser(currentUser);
   }, [router]);
 
   if (!user) return null;
